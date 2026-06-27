@@ -29,9 +29,6 @@ RETRYABLE_EXCEPTIONS = (
     ConnectionError,
 )
 
-# Number of download attempts before giving up (initial try + retries).
-MAX_DOWNLOAD_ATTEMPTS = 2
-
 
 @dataclass(slots=True)
 class Track(Media):
@@ -54,8 +51,11 @@ class Track(Media):
 
     async def download(self):
         # TODO: progress bar description
-        async with global_download_semaphore(self.config.session.downloads):
-            for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+        downloads = self.config.session.downloads
+        # At least one attempt; max_retries is the number of *extra* tries.
+        max_attempts = max(1, downloads.max_retries + 1)
+        async with global_download_semaphore(downloads):
+            for attempt in range(1, max_attempts + 1):
                 label = f"Track {self.meta.tracknumber}"
                 if attempt > 1:
                     label += f" (retry {attempt - 1})"
@@ -76,12 +76,19 @@ class Track(Media):
                         )
                         break
                     except RETRYABLE_EXCEPTIONS as e:
-                        if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                        if attempt < max_attempts:
+                            # Exponential backoff so we don't hammer a struggling
+                            # server (downloads bypass the API rate limiter).
+                            delay = min(
+                                downloads.retry_base_delay * 2 ** (attempt - 1),
+                                downloads.retry_max_delay,
+                            )
                             logger.warning(
                                 f"Network error downloading track "
-                                f"'{self.meta.title}', retrying "
-                                f"({attempt}/{MAX_DOWNLOAD_ATTEMPTS - 1}): {e}"
+                                f"'{self.meta.title}', retrying in {delay:.1f}s "
+                                f"({attempt}/{max_attempts - 1}): {e}"
                             )
+                            await asyncio.sleep(delay)
                             continue
                         logger.error(
                             f"Persistent network error downloading track "

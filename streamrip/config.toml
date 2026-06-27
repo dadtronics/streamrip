@@ -20,6 +20,13 @@ requests_per_minute = 60
 # Verify SSL certificates for API connections
 # Set to false if you encounter SSL certificate verification errors (not recommended)
 verify_ssl = true
+# Number of times to retry a download after a transient network error
+# Set to 0 to disable retries
+max_retries = 1
+# Initial delay (in seconds) before the first retry; doubles each attempt
+retry_base_delay = 1.0
+# Maximum delay (in seconds) between download retries
+retry_max_delay = 30.0
 
 [qobuz]
 # 1: 320kbps MP3, 2: 16/44.1, 3: 24/<=96, 4: 24/>=96
@@ -193,6 +200,6 @@ max_search_results = 100
 
 [misc]
 # Metadata to identify this config file. Do not change.
-version = "2.2.0"
+version = "2.3.0"
 # Print a message if a new version of streamrip is available 
 check_for_updates = true
