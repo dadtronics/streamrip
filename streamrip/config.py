@@ -367,6 +367,17 @@ def update_toml_section_from_config(toml_section, config):
         toml_section[field.name] = getattr(config, field.name)
 
 
+def _dump_clean(toml: TOMLDocument) -> str:
+    """Serialize a TOML document without trailing whitespace on any line.
+
+    tomlkit faithfully preserves trailing whitespace from the template's comment
+    lines, so every rewrite would otherwise re-introduce it (and undo the user's
+    cleanup). None of the config values are multiline strings, so trimming line
+    ends is safe.
+    """
+    return "\n".join(line.rstrip() for line in dumps(toml).split("\n"))
+
+
 class Config:
     def __init__(self, path: str, /):
         self.path = path
@@ -382,7 +393,7 @@ class Config:
 
         with open(self.path, "w") as toml_file:
             self.file.update_toml()
-            toml_file.write(dumps(self.file.toml))
+            toml_file.write(_dump_clean(self.file.toml))
 
     @staticmethod
     def _update_file(old_path: str, new_path: str):
@@ -398,7 +409,7 @@ class Config:
         update_config(old_toml, new_toml)
 
         with open(old_path, "w") as f:
-            f.write(dumps(new_toml))
+            f.write(_dump_clean(new_toml))
 
     @classmethod
     def update_file(cls, path: str):
@@ -425,7 +436,7 @@ def set_user_defaults(path: str, /):
     toml_set_user_defaults(toml)
 
     with open(path, "w") as f:
-        f.write(dumps(toml))
+        f.write(_dump_clean(toml))
 
 
 def toml_set_user_defaults(toml: TOMLDocument):
