@@ -17,7 +17,7 @@ logger = logging.getLogger("streamrip")
 APP_DIR = click.get_app_dir("streamrip")
 os.makedirs(APP_DIR, exist_ok=True)
 DEFAULT_CONFIG_PATH = os.path.join(APP_DIR, "config.toml")
-CURRENT_CONFIG_VERSION = "2.2.0"
+CURRENT_CONFIG_VERSION = "2.3.0"
 
 
 class OutdatedConfigError(Exception):
@@ -203,6 +203,13 @@ class DownloadsConfig:
     # Verify SSL certificates for API connections
     # Set to false if you encounter SSL certificate verification errors (not recommended)
     verify_ssl: bool
+    # Number of times to retry a download after a transient network error
+    # Set to 0 to disable retries
+    max_retries: int
+    # Initial delay (in seconds) before the first retry; doubles each attempt
+    retry_base_delay: float
+    # Maximum delay (in seconds) between download retries
+    retry_max_delay: float
 
 
 @dataclass(slots=True)
