@@ -3,6 +3,8 @@ import logging
 import os
 from dataclasses import dataclass
 
+import aiohttp
+
 from .. import converter
 from ..client import Client, Downloadable
 from ..config import Config
@@ -16,6 +18,19 @@ from .media import Media, Pending
 from .semaphore import global_download_semaphore
 
 logger = logging.getLogger("streamrip")
+
+# Transient failures where retrying the same download may succeed. Anything
+# outside this set means either the track is genuinely unavailable
+# (NonStreamableError) or a bug in our code -- neither is fixed by a retry, so
+# they must not be silently swallowed as a network blip.
+RETRYABLE_EXCEPTIONS = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    ConnectionError,
+)
+
+# Number of download attempts before giving up (initial try + retries).
+MAX_DOWNLOAD_ATTEMPTS = 2
 
 
 @dataclass(slots=True)
@@ -40,37 +55,49 @@ class Track(Media):
     async def download(self):
         # TODO: progress bar description
         async with global_download_semaphore(self.config.session.downloads):
-            with get_progress_callback(
-                self.config.session.cli.progress_bars,
-                await self.downloadable.size(),
-                f"Track {self.meta.tracknumber}",
-            ) as callback:
-                try:
-                    await self.downloadable.download(self.download_path, callback)
-                    retry = False
-                except Exception as e:
-                    logger.error(
-                        f"Error downloading track '{self.meta.title}', retrying: {e}"
-                    )
-                    retry = True
+            for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+                label = f"Track {self.meta.tracknumber}"
+                if attempt > 1:
+                    label += f" (retry {attempt - 1})"
 
-            if not retry:
-                return
+                with get_progress_callback(
+                    self.config.session.cli.progress_bars,
+                    await self.downloadable.size(),
+                    label,
+                ) as callback:
+                    try:
+                        await self.downloadable.download(self.download_path, callback)
+                        return
+                    except NonStreamableError as e:
+                        # The track isn't available; a retry won't help.
+                        logger.error(
+                            f"Track '{self.meta.title}' is not available to stream, "
+                            f"skipping: {e}"
+                        )
+                        break
+                    except RETRYABLE_EXCEPTIONS as e:
+                        if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                            logger.warning(
+                                f"Network error downloading track "
+                                f"'{self.meta.title}', retrying "
+                                f"({attempt}/{MAX_DOWNLOAD_ATTEMPTS - 1}): {e}"
+                            )
+                            continue
+                        logger.error(
+                            f"Persistent network error downloading track "
+                            f"'{self.meta.title}', skipping: {e}"
+                        )
+                        break
+                    except Exception:
+                        # Unexpected: log the full traceback so the bug is
+                        # visible instead of being mistaken for a network blip.
+                        logger.exception(
+                            f"Unexpected error downloading track "
+                            f"'{self.meta.title}', skipping"
+                        )
+                        break
 
-            with get_progress_callback(
-                self.config.session.cli.progress_bars,
-                await self.downloadable.size(),
-                f"Track {self.meta.tracknumber} (retry)",
-            ) as callback:
-                try:
-                    await self.downloadable.download(self.download_path, callback)
-                except Exception as e:
-                    logger.error(
-                        f"Persistent error downloading track '{self.meta.title}', skipping: {e}"
-                    )
-                    self.db.set_failed(
-                        self.downloadable.source, "track", self.meta.info.id
-                    )
+            self.db.set_failed(self.downloadable.source, "track", self.meta.info.id)
 
     async def postprocess(self):
         if self.is_single:
